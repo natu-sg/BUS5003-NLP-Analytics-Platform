@@ -22,6 +22,74 @@ st.set_page_config(
     initial_sidebar_state = "expanded",
 )
 
+# ── Auth ──────────────────────────────────────────────────────────────────────
+_USERS = {
+    "admin": {
+        "password": "admin123",
+        "role":     "Administrator",
+        "name":     "Administrator",
+    }
+}
+
+def show_login():
+    st.markdown("""
+    <style>
+    .login-wrap {
+        max-width: 420px; margin: 80px auto 0 auto;
+        background: #1a202c; border: 1px solid #2d3748;
+        border-radius: 16px; padding: 44px 40px 36px 40px;
+    }
+    .login-logo { font-size: 36px; text-align: center; margin-bottom: 6px; }
+    .login-title { color: #e2e8f0; font-size: 1.5rem; font-weight: 700;
+                   text-align: center; margin-bottom: 4px; }
+    .login-sub   { color: #718096; font-size: 13px; text-align: center;
+                   margin-bottom: 28px; }
+    .login-badge {
+        display: inline-block; background: rgba(99,179,237,0.15); color: #63b3ed;
+        border: 1px solid rgba(99,179,237,0.3); border-radius: 20px;
+        padding: 3px 14px; font-size: 11px; font-weight: 600;
+        letter-spacing: 0.06em; text-transform: uppercase;
+        margin: 0 auto 16px auto; display: block; width: fit-content;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    col_l, col_m, col_r = st.columns([1, 2, 1])
+    with col_m:
+        st.markdown("""
+        <div class="login-wrap">
+            <div class="login-logo">🔍</div>
+            <div class="login-title">Review Intelligence</div>
+            <div class="login-sub">BUS5003 · Amazon AirTag NLP Platform</div>
+            <span class="login-badge">Secure Access</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+        username = st.text_input("Username", placeholder="Enter username")
+        password = st.text_input("Password", type="password", placeholder="Enter password")
+
+        if st.button("🔐  Sign In", use_container_width=True):
+            user = _USERS.get(username)
+            if user and user["password"] == password:
+                st.session_state["authenticated"] = True
+                st.session_state["current_user"]  = username
+                st.session_state["user_role"]      = user["role"]
+                st.session_state["user_name"]      = user["name"]
+                st.rerun()
+            else:
+                st.error("❌ Invalid username or password.")
+
+        st.markdown(
+            "<p style='color:#4a5568; font-size:11px; text-align:center; margin-top:18px;'>"
+            "BUS5003 · Group 10 · La Trobe University · Sem A 2026</p>",
+            unsafe_allow_html=True,
+        )
+
+# ── Auth gate ─────────────────────────────────────────────────────────────────
+if not st.session_state.get("authenticated"):
+    show_login()
+    st.stop()
+
 # ── Cached wrappers ───────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
 def cached_sentiment(df_json):
@@ -225,12 +293,23 @@ def apply_layout(fig):
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("""
+    _uname = st.session_state.get("user_name", "User")
+    _urole = st.session_state.get("user_role", "")
+    st.markdown(f"""
     <div style="padding: 8px 0 20px 0;">
         <div style="font-size:22px; font-weight:700; color:#e2e8f0; margin-bottom:4px;">🔍 NLP Analytics Platform</div>
         <div style="font-size:12px; color:#4a5568;">BUS5003 · ANH TU NGUYEN · 22025993 · SEM A 2026</div>
+        <div style="margin-top:12px; padding:10px 12px; background:#111827; border:1px solid #2d3748; border-radius:8px;">
+            <div style="font-size:11px; color:#4a5568; text-transform:uppercase; letter-spacing:0.05em;">Signed in as</div>
+            <div style="font-size:13px; color:#e2e8f0; font-weight:600; margin-top:2px;">{_uname}</div>
+            <div style="font-size:11px; color:#63b3ed;">{_urole}</div>
+        </div>
     </div>
     """, unsafe_allow_html=True)
+    if st.button("🚪  Sign Out", use_container_width=True):
+        for key in ["authenticated", "current_user", "user_role", "user_name"]:
+            st.session_state.pop(key, None)
+        st.rerun()
 
     st.markdown("##### ⚙️ Analysis Settings")
     n_topics = st.slider("LDA Topics", min_value=3, max_value=10, value=5,
