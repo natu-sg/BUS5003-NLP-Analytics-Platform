@@ -275,8 +275,8 @@ def apply_layout(fig):
 with st.sidebar:
     st.markdown("""
     <div style="padding: 8px 0 20px 0;">
-        <div style="font-size:22px; font-weight:700; color:#e2e8f0; margin-bottom:4px;">🔍 Review Intel</div>
-        <div style="font-size:12px; color:#4a5568;">BUS5003 · Group 10 · La Trobe</div>
+        <div style="font-size:22px; font-weight:700; color:#e2e8f0; margin-bottom:4px;">🔍 NLP Analytics Platform</div>
+        <div style="font-size:12px; color:#4a5568;">BUS5003 · ANH TU NGUYEN · 22025993 · SEM A 2026 </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -307,7 +307,7 @@ with st.sidebar:
 st.markdown("""
 <div class="hero">
     <div class="hero-badge">🛰 NLP Analytics Platform</div>
-    <h1>Amazon AirTag<br>Review Intelligence</h1>
+    <h1>Welcome to<br>Review Intelligence Platform!</h1>
     <p>Transform unstructured customer reviews into actionable business intelligence
     using Sentiment Analysis, Topic Modelling, and SHAP Explainability.</p>
 </div>
