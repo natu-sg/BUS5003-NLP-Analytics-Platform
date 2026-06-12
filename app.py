@@ -14,6 +14,32 @@ from utils.sentiment       import analyze_dataframe
 from utils.topics          import train_lda, get_topic_keywords, assign_dominant_topic
 from utils.explainability  import train_classifier, get_shap_explanations
 
+# ── Cached wrappers (prevent re-running on every widget interaction) ──────────
+@st.cache_data(show_spinner=False)
+def cached_read_csv(file_bytes):
+    import io
+    return pd.read_csv(io.BytesIO(file_bytes))
+
+@st.cache_data(show_spinner=False)
+def cached_preprocess(df_json, text_col):
+    df = pd.read_json(df_json, orient='split')
+    return preprocess_dataframe(df, text_col)
+
+@st.cache_data(show_spinner=False)
+def cached_sentiment(df_json):
+    df = pd.read_json(df_json, orient='split')
+    return analyze_dataframe(df, text_col='cleaned_text')
+
+@st.cache_data(show_spinner=False)
+def cached_lda(token_lists_json, n_topics):
+    import json
+    token_lists = json.loads(token_lists_json)
+    return train_lda(token_lists, n_topics)
+
+@st.cache_data(show_spinner=False)
+def cached_shap(_pipeline, sample_texts_tuple):
+    return get_shap_explanations(_pipeline, list(sample_texts_tuple), top_n=3)
+
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title = "AirTag Review Intelligence",
@@ -342,7 +368,7 @@ if not uploaded_file:
     """, unsafe_allow_html=True)
     st.stop()
 
-df_raw = pd.read_csv(uploaded_file)
+df_raw = cached_read_csv(uploaded_file.read())
 
 text_cols = df_raw.select_dtypes(include='object').columns.tolist()
 if not text_cols:
@@ -407,7 +433,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 with st.spinner("Cleaning and tokenising reviews…"):
-    df = preprocess_dataframe(df_raw, text_col)
+    df = cached_preprocess(df_raw.to_json(orient='split'), text_col)
 
 avg_tokens = df['tokens'].apply(len).mean()
 
@@ -454,7 +480,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 with st.spinner("Running VADER sentiment analysis…"):
-    df = analyze_dataframe(df, text_col='cleaned_text')
+    df = cached_sentiment(df.to_json(orient='split'))
 
 counts     = df['label'].value_counts()
 pos_count  = counts.get('Positive', 0)
@@ -554,8 +580,11 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 with st.spinner(f"Training LDA with {n_topics} topics…"):
+    import json
     token_lists  = df['tokens'].tolist()
-    lda_model, vectorizer, doc_term_matrix, coherence = train_lda(token_lists, n_topics)
+    lda_model, vectorizer, doc_term_matrix, coherence = cached_lda(
+        json.dumps(token_lists), n_topics
+    )
     topics       = get_topic_keywords(lda_model, vectorizer)
     df['dominant_topic'] = assign_dominant_topic(lda_model, doc_term_matrix)
 
@@ -636,7 +665,7 @@ with st.spinner("Training classifier & computing SHAP values…"):
     sample_texts = df[df['high_risk']]['cleaned_text'].head(10).tolist()
 
 if sample_texts:
-    explanations = get_shap_explanations(pipeline, sample_texts, top_n=3)
+    explanations = cached_shap(pipeline, tuple(sample_texts))
     st.markdown(f"""
     <div style="color:#a0aec0; font-size:13.5px; margin-bottom:16px;">
         Showing <b style="color:#e2e8f0;">{len(explanations)}</b> high-risk review(s).
