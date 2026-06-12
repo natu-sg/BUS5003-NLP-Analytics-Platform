@@ -598,6 +598,8 @@ with tab_analysis:
         )
         topics = get_topic_keywords(lda_model, vectorizer)
         df['dominant_topic'] = assign_dominant_topic(lda_model, doc_term_matrix)
+        # Persist fully-enriched df so the Dashboard tab can access it
+        st.session_state[f"results_{_file_key}_{text_col}"] = df
 
     st.markdown(f"""
     <div class="metric-row">
@@ -638,6 +640,7 @@ with tab_analysis:
                        labels={'dominant_topic': 'Topic', 'count': 'Reviews'})
     st.plotly_chart(apply_layout(fig_cross), use_container_width=True)
 
+
     st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 
     # ── STEP 5: SHAP EXPLAINABILITY ──────────────────────────────────────────
@@ -652,11 +655,11 @@ with tab_analysis:
     """, unsafe_allow_html=True)
 
     try:
-        with st.spinner("Training classifier & computing SHAP values…"):
+        with st.spinner("Training classifier & computing SHAP values..."):
             pipeline, _ = train_classifier(df)
             sample_texts = df[df['high_risk']]['cleaned_text'].head(10).tolist()
     except ValueError as e:
-        st.warning(f"⚠️ SHAP explainability unavailable: {e}")
+        st.warning(f"SHAP explainability unavailable: {e}")
         sample_texts = []
 
     if sample_texts:
@@ -664,26 +667,26 @@ with tab_analysis:
         st.markdown(f"""
         <div style="color:#a0aec0; font-size:13.5px; margin-bottom:16px;">
             Showing <b style="color:#e2e8f0;">{len(explanations)}</b> high-risk review(s).
-            <span style="color:#48bb78;">●</span> Green = positive driver &nbsp;
-            <span style="color:#fc8181;">●</span> Red = negative driver
+            <span style="color:#48bb78;">Green = positive driver</span>
+            <span style="color:#fc8181;">Red = negative driver</span>
         </div>
         """, unsafe_allow_html=True)
         for exp in explanations:
             label_color = "#48bb78" if exp['predicted_label'] == 'Positive' else ("#fc8181" if exp['predicted_label'] == 'Negative' else "#ecc94b")
             chips = "".join(
                 f'<span class="chip-pos">+{word} ({score:+.3f})</span>' if score > 0
-                else f'<span class="chip-neg">−{word} ({score:+.3f})</span>'
+                else f'<span class="chip-neg">{word} ({score:+.3f})</span>'
                 for word, score in exp['top_words']
             )
             st.markdown(f"""
             <div class="review-card">
-                <div class="review-text">"{exp['text'][:160]}{'…' if len(exp['text']) > 160 else ''}"</div>
+                <div class="review-text">"{exp['text'][:160]}"</div>
                 <div style="margin-bottom:8px;"><span class="review-label" style="color:{label_color};">● {exp['predicted_label']}</span></div>
                 <div>{chips}</div>
             </div>
             """, unsafe_allow_html=True)
     else:
-        st.info("No high-risk reviews in the current selection. Adjust the star filter or upload more data.")
+        st.info("No high-risk reviews in the current selection.")
 
     st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 
@@ -699,18 +702,18 @@ with tab_analysis:
     """, unsafe_allow_html=True)
 
     output_cols = [c for c in [text_col, 'cleaned_text', 'label', 'compound', 'confidence', 'high_risk', 'dominant_topic'] if c in df.columns]
-    csv_bytes   = df[output_cols].to_csv(index=False).encode('utf-8')
+    csv_bytes = df[output_cols].to_csv(index=False).encode('utf-8')
 
     col_dl, col_info = st.columns([1, 2])
     with col_dl:
-        st.download_button(label="⬇️ Download Full Analysis (CSV)", data=csv_bytes,
+        st.download_button(label="Download Full Analysis (CSV)", data=csv_bytes,
                            file_name="nlp_analysis_results.csv", mime="text/csv")
     with col_info:
+        exported = " | ".join(output_cols)
         st.markdown(f"""
         <div style="background:#1a202c; border:1px solid #2d3748; border-radius:10px;
                     padding:16px 20px; color:#718096; font-size:13px; line-height:1.8;">
-            <b style="color:#e2e8f0;">Exported columns:</b><br>
-            {" · ".join(f"<code style='color:#63b3ed;'>{c}</code>" for c in output_cols)}
+            <b style="color:#e2e8f0;">Exported columns:</b> {exported}
         </div>
         """, unsafe_allow_html=True)
 
@@ -721,16 +724,15 @@ with tab_analysis:
     """, unsafe_allow_html=True)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 2 — DASHBOARD
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
+# TAB 2 - DASHBOARD
+# =============================================================================
 with tab_dashboard:
-    # Check if analysis has been run
     _dash_df_key = None
     for k in st.session_state:
-        if k.startswith("preprocess_"):
+        if k.startswith("results_"):
             _dash_df_key = k
-    _has_results = _dash_df_key is not None and 'label' in st.session_state.get(_dash_df_key, pd.DataFrame()).columns
+    _has_results = _dash_df_key is not None
 
     if not _has_results:
         st.markdown("""
@@ -738,26 +740,27 @@ with tab_dashboard:
                     padding:60px; text-align:center; margin-top:32px;">
             <div style="font-size:48px; margin-bottom:16px;">📈</div>
             <div style="color:#e2e8f0; font-size:1.2rem; font-weight:600; margin-bottom:8px;">No data yet</div>
-            <div style="color:#718096; font-size:14px;">Run the Analysis pipeline first to see your executive dashboard.</div>
+            <div style="color:#718096; font-size:14px;">
+                Run the full Analysis pipeline first (Steps 1-4) to populate this dashboard.
+            </div>
         </div>
         """, unsafe_allow_html=True)
     else:
         dash_df = st.session_state[_dash_df_key]
 
-        # ── KPI row ──────────────────────────────────────────────────────────
         _counts   = dash_df['label'].value_counts() if 'label' in dash_df.columns else pd.Series(dtype=int)
-        _pos      = _counts.get('Positive', 0)
-        _neu      = _counts.get('Neutral',  0)
-        _neg      = _counts.get('Negative', 0)
+        _pos      = int(_counts.get('Positive', 0))
+        _neu      = int(_counts.get('Neutral',  0))
+        _neg      = int(_counts.get('Negative', 0))
         _total    = len(dash_df)
         _risk     = int(dash_df['high_risk'].sum()) if 'high_risk' in dash_df.columns else 0
-        _avg_comp = dash_df['compound'].mean() if 'compound' in dash_df.columns else 0
+        _avg_comp = float(dash_df['compound'].mean()) if 'compound' in dash_df.columns else 0.0
         _pos_rate = _pos / _total * 100 if _total else 0
         _neg_rate = _neg / _total * 100 if _total else 0
 
         st.markdown(f"""
         <div style="color:#e2e8f0; font-size:1.4rem; font-weight:700; margin:8px 0 20px 0;">
-            📊 Executive Summary Dashboard
+            Executive Summary Dashboard
         </div>
         <div class="metric-row">
             <div class="metric-card blue">
@@ -777,7 +780,7 @@ with tab_dashboard:
             <div class="metric-card yellow">
                 <div class="label">Avg Compound Score</div>
                 <div class="value">{_avg_comp:.3f}</div>
-                <div class="delta" style="color:#ecc94b;">Range −1 to +1</div>
+                <div class="delta" style="color:#ecc94b;">Range -1 to +1</div>
             </div>
             <div class="metric-card orange">
                 <div class="label">High-Risk Flagged</div>
@@ -789,7 +792,6 @@ with tab_dashboard:
 
         st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 
-        # ── Charts row 1 ─────────────────────────────────────────────────────
         col1, col2 = st.columns(2)
         with col1:
             fig_donut = px.pie(dash_df, names='label', title="Sentiment Breakdown",
@@ -799,13 +801,12 @@ with tab_dashboard:
             st.plotly_chart(apply_layout(fig_donut), use_container_width=True)
 
         with col2:
-            # Compound score gauge
             fig_gauge = go.Figure(go.Indicator(
-                mode    = "gauge+number+delta",
-                value   = round(_avg_comp, 3),
-                delta   = {'reference': 0, 'valueformat': '.3f'},
-                title   = {'text': "Avg Sentiment Score", 'font': {'color': '#e2e8f0', 'size': 15}},
-                gauge   = {
+                mode   = "gauge+number+delta",
+                value  = round(_avg_comp, 3),
+                delta  = {'reference': 0, 'valueformat': '.3f'},
+                title  = {'text': "Avg Sentiment Score", 'font': {'color': '#e2e8f0', 'size': 15}},
+                gauge  = {
                     'axis':  {'range': [-1, 1], 'tickcolor': '#718096'},
                     'bar':   {'color': '#48bb78' if _avg_comp >= 0 else '#fc8181'},
                     'bgcolor': '#1a202c',
@@ -814,47 +815,35 @@ with tab_dashboard:
                         {'range': [-0.05, 0.05], 'color': 'rgba(236,201,75,0.10)'},
                         {'range': [0.05, 1],   'color': 'rgba(72,187,120,0.15)'},
                     ],
-                    'threshold': {
-                        'line': {'color': '#e2e8f0', 'width': 2},
-                        'thickness': 0.75,
-                        'value': _avg_comp,
-                    },
                 },
                 number = {'font': {'color': '#e2e8f0', 'size': 40}},
             ))
             fig_gauge.update_layout(**PLOT_LAYOUT)
             st.plotly_chart(fig_gauge, use_container_width=True)
 
-        # ── Charts row 2 ─────────────────────────────────────────────────────
         if 'dominant_topic' in dash_df.columns:
-            st.markdown('<div style="color:#e2e8f0; font-weight:600; font-size:1rem; margin:8px 0 12px 0;">🗂 Topic × Sentiment Heatmap</div>', unsafe_allow_html=True)
+            st.markdown('<div style="color:#e2e8f0; font-weight:600; font-size:1rem; margin:8px 0 12px 0;">Topic x Sentiment Heatmap</div>', unsafe_allow_html=True)
             heat_data = dash_df.groupby(['dominant_topic', 'label']).size().unstack(fill_value=0)
             heat_data.index = ['Topic ' + str(i) for i in heat_data.index]
             fig_heat = go.Figure(go.Heatmap(
-                z          = heat_data.values,
-                x          = heat_data.columns.tolist(),
-                y          = heat_data.index.tolist(),
-                colorscale = [[0, '#0d1117'], [0.5, '#2b6cb0'], [1, '#63b3ed']],
-                text       = heat_data.values,
-                texttemplate = "%{text}",
-                textfont   = {'color': '#e2e8f0', 'size': 12},
-                showscale  = True,
+                z=heat_data.values, x=heat_data.columns.tolist(), y=heat_data.index.tolist(),
+                colorscale=[[0, '#0d1117'], [0.5, '#2b6cb0'], [1, '#63b3ed']],
+                text=heat_data.values, texttemplate="%{text}",
+                textfont={'color': '#e2e8f0', 'size': 12}, showscale=True,
             ))
             fig_heat.update_layout(**PLOT_LAYOUT, height=300)
             st.plotly_chart(fig_heat, use_container_width=True)
 
-        # ── Top negative reviews table ────────────────────────────────────────
-        st.markdown('<div style="color:#e2e8f0; font-weight:600; font-size:1rem; margin:16px 0 10px 0;">🔴 Most Negative Reviews (Bottom 10 by Compound Score)</div>', unsafe_allow_html=True)
+        st.markdown('<div style="color:#e2e8f0; font-weight:600; font-size:1rem; margin:16px 0 10px 0;">Most Negative Reviews (Bottom 10)</div>', unsafe_allow_html=True)
         if 'compound' in dash_df.columns:
-            _text_col_name = [c for c in dash_df.columns if c not in ['cleaned_text', 'token_str', 'tokens', 'label', 'compound', 'confidence', 'high_risk', 'dominant_topic', 'label_num']]
-            _show_cols = (['compound', 'label', 'confidence'] +
-                          ([_text_col_name[0]] if _text_col_name else []) +
-                          (['dominant_topic'] if 'dominant_topic' in dash_df.columns else []))
-            _show_cols = [c for c in _show_cols if c in dash_df.columns]
-            st.dataframe(
-                dash_df.nsmallest(10, 'compound')[_show_cols],
-                use_container_width=True,
-            )
+            _known = {'cleaned_text', 'token_str', 'tokens', 'label', 'compound',
+                      'confidence', 'high_risk', 'dominant_topic', 'label_num'}
+            _text_candidates = [c for c in dash_df.columns if c not in _known]
+            _show = (['compound', 'label', 'confidence'] +
+                     ([_text_candidates[0]] if _text_candidates else []) +
+                     (['dominant_topic'] if 'dominant_topic' in dash_df.columns else []))
+            _show = [c for c in _show if c in dash_df.columns]
+            st.dataframe(dash_df.nsmallest(10, 'compound')[_show], use_container_width=True)
 
         st.markdown("""
         <div style="text-align:center; color:#2d3748; font-size:12px; margin-top:48px; padding:24px 0;">
@@ -863,144 +852,314 @@ with tab_dashboard:
         """, unsafe_allow_html=True)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 3 — API CONNECTION
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
+# TAB 3 - API DOCUMENTATION
+# =============================================================================
 with tab_api:
     st.markdown("""
-    <div style="color:#e2e8f0; font-size:1.4rem; font-weight:700; margin:8px 0 4px 0;">🔌 API Connection</div>
-    <div style="color:#718096; font-size:13px; margin-bottom:28px;">
-        Configure external data sources or push analysis results to downstream systems.
+<style>
+.api-doc-header {
+    background: linear-gradient(135deg, #1a1f2e, #0f3460);
+    border: 1px solid rgba(99,179,237,0.2);
+    border-radius: 14px; padding: 32px 36px; margin-bottom: 28px;
+}
+.api-doc-title { color: #f0f4ff; font-size: 1.8rem; font-weight: 700; margin: 0 0 8px 0; }
+.api-badge {
+    display: inline-block; border-radius: 6px; padding: 2px 10px;
+    font-size: 11px; font-weight: 700; margin-right: 6px; letter-spacing: 0.03em;
+}
+.badge-version { background: #4a5568; color: #e2e8f0; }
+.badge-oas     { background: #276749; color: #9ae6b4; }
+.badge-beta    { background: #744210; color: #fbd38d; }
+.api-doc-section { background: #1a202c; border: 1px solid #2d3748; border-radius: 12px; padding: 24px 28px; margin-bottom: 16px; }
+.api-doc-section h3 { color: #63b3ed; font-size: 1.05rem; font-weight: 700; margin: 0 0 10px 0; }
+.api-doc-section p  { color: #a0aec0; font-size: 13px; margin: 0 0 8px 0; line-height: 1.6; }
+.endpoint-group { background: #1a202c; border: 1px solid #2d3748; border-radius: 12px; margin-bottom: 12px; overflow: hidden; }
+.endpoint-group-header { padding: 14px 20px; background: #161d2e; border-bottom: 1px solid #2d3748; color: #e2e8f0; font-weight: 600; font-size: 14px; }
+.endpoint-group-desc { color: #718096; font-size: 12px; font-weight: 400; margin-left: 8px; }
+.endpoint-row { display: flex; align-items: center; gap: 14px; padding: 11px 20px; border-bottom: 1px solid #1a202c; transition: background 0.15s; }
+.endpoint-row:last-child { border-bottom: none; }
+.endpoint-row:hover { background: #1e2533; }
+.method-badge { display: inline-block; border-radius: 5px; padding: 3px 10px; font-size: 11px; font-weight: 800; min-width: 52px; text-align: center; letter-spacing: 0.04em; flex-shrink: 0; }
+.method-get    { background: rgba(49,130,206,0.2);  color: #63b3ed; border: 1px solid rgba(49,130,206,0.4); }
+.method-post   { background: rgba(39,103,73,0.25);  color: #68d391; border: 1px solid rgba(39,103,73,0.5); }
+.method-put    { background: rgba(214,158,46,0.2);  color: #f6e05e; border: 1px solid rgba(214,158,46,0.4); }
+.method-delete { background: rgba(197,48,48,0.2);   color: #fc8181; border: 1px solid rgba(197,48,48,0.4); }
+.endpoint-path { color: #a0aec0; font-family: monospace; font-size: 13px; flex: 1; }
+.endpoint-path span { color: #63b3ed; }
+.endpoint-desc { color: #718096; font-size: 12px; flex: 2; }
+.lock-icon     { color: #4a5568; font-size: 14px; flex-shrink: 0; }
+.schema-pill { display: inline-block; background: #1a202c; border: 1px solid #2d3748; border-radius: 6px; padding: 4px 12px; font-size: 12px; color: #63b3ed; margin: 3px 4px; font-family: monospace; }
+.rate-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+.rate-table th { color: #718096; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid #2d3748; padding: 8px 12px; text-align: left; }
+.rate-table td { color: #e2e8f0; font-size: 13px; padding: 9px 12px; border-bottom: 1px solid #1a202c; }
+.rate-table tr:last-child td { border-bottom: none; }
+</style>
+
+<div class="api-doc-header">
+    <div class="api-doc-title">Review Intelligence API</div>
+    <div style="margin: 8px 0 14px 0;">
+        <span class="api-badge badge-version">v1.0</span>
+        <span class="api-badge badge-oas">OAS3</span>
+        <span class="api-badge badge-beta">BETA</span>
     </div>
+    <p style="color:#8892a4; font-size:14px; margin:0; max-width:700px; line-height:1.6;">
+        The Review Intelligence API is a RESTful API for ingesting customer review data and
+        retrieving NLP analysis results including sentiment scoring, topic modelling, and
+        SHAP-based explainability. Designed for integration with CX platforms, BI tools, and
+        data warehouses.
+        Base URL: <code style="color:#63b3ed;">https://api.review-intelligence.com</code>
+    </p>
+</div>
     """, unsafe_allow_html=True)
 
-    col_api1, col_api2 = st.columns([1, 1])
+    col_ov, col_auth, col_rate = st.columns([2, 1, 1])
 
-    with col_api1:
+    with col_ov:
         st.markdown("""
-        <div class="api-card">
-            <h4>📥 Data Source Connection</h4>
-            <p>Connect to an external API to pull review data directly.</p>
+        <div class="api-doc-section">
+            <h3>Overview</h3>
+            <p>Current capabilities include:</p>
+            <ul style="color:#a0aec0; font-size:13px; margin:0; padding-left:18px; line-height:2;">
+                <li>Upload and manage review datasets</li>
+                <li>Trigger and retrieve sentiment analysis jobs (VADER)</li>
+                <li>Run LDA topic modelling and retrieve topic keywords</li>
+                <li>Fetch SHAP word-level explanations for reviews</li>
+                <li>Export enriched datasets as CSV or JSON</li>
+                <li>Register webhooks for real-time job completion events</li>
+            </ul>
+            <p style="margin-top:12px; font-size:12px; color:#4a5568;">
+                Endpoints labelled BETA are intended for testing and may change without notice.
+                Do not use in production integrations.
+            </p>
         </div>
         """, unsafe_allow_html=True)
 
-        api_url    = st.text_input("API Endpoint URL",    placeholder="https://api.example.com/reviews",
-                                   key="api_url")
-        api_key    = st.text_input("API Key / Token",     placeholder="Bearer sk-…",
-                                   type="password", key="api_key")
-        api_params = st.text_area("Query Parameters (JSON)", placeholder='{"limit": 1000, "source": "amazon"}',
-                                  height=80, key="api_params")
-
-        if st.button("🔗  Test Connection", key="btn_test"):
-            if not api_url:
-                st.error("Please enter an API endpoint URL.")
-            else:
-                import urllib.request, urllib.error
-                try:
-                    req = urllib.request.Request(api_url)
-                    if api_key:
-                        req.add_header("Authorization", api_key)
-                    with urllib.request.urlopen(req, timeout=5) as resp:
-                        status = resp.getcode()
-                    st.success(f"✅ Connected — HTTP {status}")
-                    st.session_state["api_connected"] = True
-                    st.session_state["api_url_saved"] = api_url
-                except urllib.error.HTTPError as e:
-                    st.warning(f"⚠️ HTTP {e.code}: {e.reason} — endpoint reachable but returned an error.")
-                    st.session_state["api_connected"] = False
-                except Exception as e:
-                    st.error(f"❌ Connection failed: {e}")
-                    st.session_state["api_connected"] = False
-
-    with col_api2:
+    with col_auth:
         st.markdown("""
-        <div class="api-card">
-            <h4>📤 Export to Webhook / Downstream API</h4>
-            <p>Push analysis results to a webhook, BI tool, or data warehouse endpoint.</p>
+        <div class="api-doc-section">
+            <h3>Authentication</h3>
+            <p>All endpoints require a Bearer token in the <code style="color:#63b3ed;">Authorization</code> header.</p>
+            <div class="code-block" style="margin-top:10px;">Authorization:<br>Bearer YOUR_API_KEY</div>
+            <p style="margin-top:12px;">Keys are managed under <b style="color:#e2e8f0;">Admin &rarr; API Credentials</b>.</p>
+            <p>Scopes: <code style="color:#63b3ed;">read</code>, <code style="color:#63b3ed;">write</code>, <code style="color:#63b3ed;">admin</code></p>
         </div>
         """, unsafe_allow_html=True)
 
-        webhook_url  = st.text_input("Webhook / Push URL", placeholder="https://hooks.example.com/nlp-results",
-                                     key="webhook_url")
-        webhook_key  = st.text_input("Auth Header Value",  placeholder="Bearer token or API key",
-                                     type="password", key="webhook_key")
-
-        _has_analysis = any(k.startswith("preprocess_") for k in st.session_state)
-        if st.button("📨  Push Results", key="btn_push", disabled=not _has_analysis):
-            if not webhook_url:
-                st.error("Please enter a webhook URL.")
-            else:
-                # Build a summary payload
-                _df_key = next((k for k in st.session_state if k.startswith("preprocess_")), None)
-                _push_df = st.session_state[_df_key] if _df_key else pd.DataFrame()
-                _summary = {
-                    "total_reviews":  len(_push_df),
-                    "positive_count": int((_push_df.get('label', pd.Series()) == 'Positive').sum()),
-                    "negative_count": int((_push_df.get('label', pd.Series()) == 'Negative').sum()),
-                    "neutral_count":  int((_push_df.get('label', pd.Series()) == 'Neutral').sum()),
-                    "avg_compound":   round(float(_push_df['compound'].mean()), 4) if 'compound' in _push_df.columns else None,
-                    "high_risk_count":int(_push_df['high_risk'].sum()) if 'high_risk' in _push_df.columns else 0,
-                }
-                import urllib.request
-                try:
-                    payload = json.dumps(_summary).encode('utf-8')
-                    req = urllib.request.Request(webhook_url, data=payload,
-                                                 headers={"Content-Type": "application/json",
-                                                          **({"Authorization": webhook_key} if webhook_key else {})})
-                    with urllib.request.urlopen(req, timeout=8) as resp:
-                        st.success(f"✅ Results pushed — HTTP {resp.getcode()}")
-                except Exception as e:
-                    st.error(f"❌ Push failed: {e}")
-
-        if not _has_analysis:
-            st.caption("Run Analysis first to enable result pushing.")
-
-    st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
-
-    # ── Saved connections ────────────────────────────────────────────────────
-    st.markdown('<div style="color:#e2e8f0; font-weight:600; font-size:1rem; margin-bottom:16px;">💾 Saved Connections</div>', unsafe_allow_html=True)
-
-    _saved = {
-        "Amazon Product API":    {"url": "https://api.amazon.com/reviews", "status": "⚪ Not tested"},
-        "Internal Data Warehouse": {"url": "https://dw.internal/api/v2/reviews", "status": "⚪ Not tested"},
-    }
-    if st.session_state.get("api_url_saved"):
-        _saved["Last Tested"] = {
-            "url":    st.session_state["api_url_saved"],
-            "status": "✅ Connected" if st.session_state.get("api_connected") else "❌ Failed",
-        }
-
-    for name, info in _saved.items():
-        st.markdown(f"""
-        <div style="background:#1a202c; border:1px solid #2d3748; border-radius:10px;
-                    padding:14px 20px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
-            <div>
-                <div style="color:#e2e8f0; font-weight:600; font-size:13px;">{name}</div>
-                <div style="color:#4a5568; font-size:12px; font-family:monospace; margin-top:3px;">{info['url']}</div>
-            </div>
-            <div style="font-size:12px; color:#a0aec0;">{info['status']}</div>
+    with col_rate:
+        st.markdown("""
+        <div class="api-doc-section">
+            <h3>Rate Limits</h3>
+            <p>Applied per API key. Custom plans available on request.</p>
+            <table class="rate-table">
+                <tr><th></th><th>Sandbox</th><th>Production</th></tr>
+                <tr><td>Rate limit</td><td>1 req/s</td><td>10 req/s</td></tr>
+                <tr><td>Burst</td><td>5</td><td>50</td></tr>
+                <tr><td>Daily quota</td><td>500</td><td>50,000</td></tr>
+            </table>
+            <p style="margin-top:10px; font-size:12px; color:#4a5568;">
+                Exceeding limits returns <code style="color:#fc8181;">429 Too Many Requests</code>.
+            </p>
         </div>
         """, unsafe_allow_html=True)
 
     st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
-
-    # ── API usage reference ──────────────────────────────────────────────────
-    st.markdown('<div style="color:#e2e8f0; font-weight:600; font-size:1rem; margin-bottom:12px;">📖 Example Usage</div>', unsafe_allow_html=True)
+    st.markdown('<div style="color:#e2e8f0; font-weight:700; font-size:1.1rem; margin-bottom:16px;">Endpoint Reference</div>', unsafe_allow_html=True)
 
     st.markdown("""
-    <div class="code-block">
-# Pull reviews from external API<br>
-import requests<br>
-<br>
-response = requests.get(<br>
-&nbsp;&nbsp;&nbsp;&nbsp;"https://api.example.com/reviews",<br>
-&nbsp;&nbsp;&nbsp;&nbsp;headers={"Authorization": "Bearer YOUR_API_KEY"},<br>
-&nbsp;&nbsp;&nbsp;&nbsp;params={"limit": 5000, "source": "amazon_airtag"}<br>
-)<br>
-df = pd.DataFrame(response.json()["data"])<br>
-df.to_csv("reviews.csv", index=False)
+    <div class="endpoint-group">
+        <div class="endpoint-group-header">Authentication
+            <span class="endpoint-group-desc">Obtain and refresh access tokens.</span>
+        </div>
+        <div class="endpoint-row">
+            <span class="method-badge method-post">POST</span>
+            <span class="endpoint-path">/oauth/token</span>
+            <span class="endpoint-desc">Retrieve an access token using client credentials</span>
+            <span class="lock-icon">&#x1F513;</span>
+        </div>
+        <div class="endpoint-row">
+            <span class="method-badge method-post">POST</span>
+            <span class="endpoint-path">/oauth/token/refresh</span>
+            <span class="endpoint-desc">Refresh an expired access token</span>
+            <span class="lock-icon">&#x1F513;</span>
+        </div>
+    </div>
+
+    <div class="endpoint-group">
+        <div class="endpoint-group-header">Reviews
+            <span class="endpoint-group-desc">Upload, retrieve, and manage review datasets.</span>
+        </div>
+        <div class="endpoint-row">
+            <span class="method-badge method-get">GET</span>
+            <span class="endpoint-path">/v1/reviews</span>
+            <span class="endpoint-desc">Get paginated list of all uploaded review datasets</span>
+            <span class="lock-icon">&#x1F512;</span>
+        </div>
+        <div class="endpoint-row">
+            <span class="method-badge method-get">GET</span>
+            <span class="endpoint-path">/v1/reviews/<span>{id}</span></span>
+            <span class="endpoint-desc">Get a single review dataset by ID</span>
+            <span class="lock-icon">&#x1F512;</span>
+        </div>
+        <div class="endpoint-row">
+            <span class="method-badge method-post">POST</span>
+            <span class="endpoint-path">/v1/reviews/upload</span>
+            <span class="endpoint-desc">Upload a CSV or JSON file of reviews (multipart/form-data)</span>
+            <span class="lock-icon">&#x1F512;</span>
+        </div>
+        <div class="endpoint-row">
+            <span class="method-badge method-delete">DEL</span>
+            <span class="endpoint-path">/v1/reviews/<span>{id}</span></span>
+            <span class="endpoint-desc">Delete a review dataset by ID</span>
+            <span class="lock-icon">&#x1F512;</span>
+        </div>
+    </div>
+
+    <div class="endpoint-group">
+        <div class="endpoint-group-header">Analysis
+            <span class="endpoint-group-desc">Trigger NLP jobs and retrieve sentiment, topic, and explainability results.</span>
+        </div>
+        <div class="endpoint-row">
+            <span class="method-badge method-post">POST</span>
+            <span class="endpoint-path">/v1/analysis/sentiment</span>
+            <span class="endpoint-desc">Trigger VADER sentiment analysis job on a dataset</span>
+            <span class="lock-icon">&#x1F512;</span>
+        </div>
+        <div class="endpoint-row">
+            <span class="method-badge method-get">GET</span>
+            <span class="endpoint-path">/v1/analysis/sentiment/<span>{job_id}</span></span>
+            <span class="endpoint-desc">Poll sentiment job status and retrieve results</span>
+            <span class="lock-icon">&#x1F512;</span>
+        </div>
+        <div class="endpoint-row">
+            <span class="method-badge method-post">POST</span>
+            <span class="endpoint-path">/v1/analysis/topics</span>
+            <span class="endpoint-desc">Trigger LDA topic modelling job — specify n_topics in body</span>
+            <span class="lock-icon">&#x1F512;</span>
+        </div>
+        <div class="endpoint-row">
+            <span class="method-badge method-get">GET</span>
+            <span class="endpoint-path">/v1/analysis/topics/<span>{job_id}</span></span>
+            <span class="endpoint-desc">Poll topic job and retrieve keywords + dominant topic assignments</span>
+            <span class="lock-icon">&#x1F512;</span>
+        </div>
+        <div class="endpoint-row">
+            <span class="method-badge method-post">POST</span>
+            <span class="endpoint-path">/v1/analysis/explain</span>
+            <span class="endpoint-desc">Compute SHAP word-level explanations for specified review IDs <span class="api-badge badge-beta">BETA</span></span>
+            <span class="lock-icon">&#x1F512;</span>
+        </div>
+        <div class="endpoint-row">
+            <span class="method-badge method-get">GET</span>
+            <span class="endpoint-path">/v1/analysis/explain/<span>{job_id}</span></span>
+            <span class="endpoint-desc">Retrieve SHAP explanation results by job ID</span>
+            <span class="lock-icon">&#x1F512;</span>
+        </div>
+    </div>
+
+    <div class="endpoint-group">
+        <div class="endpoint-group-header">Export
+            <span class="endpoint-group-desc">Download enriched datasets and summary reports.</span>
+        </div>
+        <div class="endpoint-row">
+            <span class="method-badge method-get">GET</span>
+            <span class="endpoint-path">/v1/export/<span>{dataset_id}</span>/csv</span>
+            <span class="endpoint-desc">Download full enriched dataset as CSV</span>
+            <span class="lock-icon">&#x1F512;</span>
+        </div>
+        <div class="endpoint-row">
+            <span class="method-badge method-get">GET</span>
+            <span class="endpoint-path">/v1/export/<span>{dataset_id}</span>/json</span>
+            <span class="endpoint-desc">Download enriched dataset as JSON array</span>
+            <span class="lock-icon">&#x1F512;</span>
+        </div>
+        <div class="endpoint-row">
+            <span class="method-badge method-get">GET</span>
+            <span class="endpoint-path">/v1/export/<span>{dataset_id}</span>/summary</span>
+            <span class="endpoint-desc">Get a JSON summary report with KPIs, sentiment counts, and top topics</span>
+            <span class="lock-icon">&#x1F512;</span>
+        </div>
+    </div>
+
+    <div class="endpoint-group">
+        <div class="endpoint-group-header">Webhooks
+            <span class="endpoint-group-desc">Register endpoints to receive real-time job completion notifications.</span>
+        </div>
+        <div class="endpoint-row">
+            <span class="method-badge method-get">GET</span>
+            <span class="endpoint-path">/v1/webhooks</span>
+            <span class="endpoint-desc">List all registered webhook endpoints</span>
+            <span class="lock-icon">&#x1F512;</span>
+        </div>
+        <div class="endpoint-row">
+            <span class="method-badge method-post">POST</span>
+            <span class="endpoint-path">/v1/webhooks</span>
+            <span class="endpoint-desc">Register a new webhook URL for job completion events</span>
+            <span class="lock-icon">&#x1F512;</span>
+        </div>
+        <div class="endpoint-row">
+            <span class="method-badge method-put">PUT</span>
+            <span class="endpoint-path">/v1/webhooks/<span>{id}</span></span>
+            <span class="endpoint-desc">Update a registered webhook URL or event filter</span>
+            <span class="lock-icon">&#x1F512;</span>
+        </div>
+        <div class="endpoint-row">
+            <span class="method-badge method-delete">DEL</span>
+            <span class="endpoint-path">/v1/webhooks/<span>{id}</span></span>
+            <span class="endpoint-desc">Delete a registered webhook</span>
+            <span class="lock-icon">&#x1F512;</span>
+        </div>
     </div>
     """, unsafe_allow_html=True)
+
+    st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
+
+    schemas = ["ReviewUpload", "ReviewRecord", "SentimentJob", "SentimentResult",
+               "TopicJob", "TopicResult", "TopicKeyword", "ExplainJob", "ExplainResult",
+               "ShapWord", "ExportSummary", "Webhook", "OAuthToken", "Error",
+               "PaginatedResponse", "JobStatus"]
+    pills = "".join(f'<span class="schema-pill">{s}</span>' for s in schemas)
+    st.markdown(f'<div style="color:#e2e8f0; font-weight:700; margin-bottom:10px;">Schemas</div>{pills}', unsafe_allow_html=True)
+
+    st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
+
+    ex1, ex2 = st.columns(2)
+    with ex1:
+        st.markdown('<div style="color:#718096; font-size:12px; margin-bottom:6px;">Get access token</div>', unsafe_allow_html=True)
+        st.markdown("""
+        <div class="code-block">
+import requests<br><br>
+r = requests.post(<br>
+&nbsp;&nbsp;"https://api.review-intelligence.com/oauth/token",<br>
+&nbsp;&nbsp;json={<br>
+&nbsp;&nbsp;&nbsp;&nbsp;"client_id": "YOUR_CLIENT_ID",<br>
+&nbsp;&nbsp;&nbsp;&nbsp;"client_secret": "YOUR_SECRET",<br>
+&nbsp;&nbsp;&nbsp;&nbsp;"grant_type": "client_credentials"<br>
+&nbsp;&nbsp;}<br>
+)<br>
+token = r.json()["access_token"]
+        </div>
+        """, unsafe_allow_html=True)
+
+    with ex2:
+        st.markdown('<div style="color:#718096; font-size:12px; margin-bottom:6px;">Upload reviews and trigger sentiment job</div>', unsafe_allow_html=True)
+        st.markdown("""
+        <div class="code-block">
+headers = {"Authorization": f"Bearer {token}"}<br><br>
+with open("reviews.csv", "rb") as f:<br>
+&nbsp;&nbsp;upload = requests.post(<br>
+&nbsp;&nbsp;&nbsp;&nbsp;"https://api.review-intelligence.com/v1/reviews/upload",<br>
+&nbsp;&nbsp;&nbsp;&nbsp;headers=headers, files={"file": f}<br>
+&nbsp;&nbsp;)<br>
+dataset_id = upload.json()["dataset_id"]<br><br>
+job = requests.post(<br>
+&nbsp;&nbsp;"https://api.review-intelligence.com/v1/analysis/sentiment",<br>
+&nbsp;&nbsp;headers=headers,<br>
+&nbsp;&nbsp;json={"dataset_id": dataset_id, "text_column": "review_body"}<br>
+)<br>
+job_id = job.json()["job_id"]
+        </div>
+        """, unsafe_allow_html=True)
 
     st.markdown("""
     <div style="text-align:center; color:#2d3748; font-size:12px; margin-top:48px; padding:24px 0;">
