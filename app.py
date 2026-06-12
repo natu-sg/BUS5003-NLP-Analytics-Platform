@@ -15,10 +15,37 @@ from utils.topics          import train_lda, get_topic_keywords, assign_dominant
 from utils.explainability  import train_classifier, get_shap_explanations
 
 # ── Cached wrappers (prevent re-running on every widget interaction) ──────────
-@st.cache_data(show_spinner=False)
-def cached_read_csv(file_bytes):
+# No row cap — process all rows with optimised parallel pipeline
+
+def load_csv_with_progress(file_bytes: bytes) -> pd.DataFrame:
+    """Read CSV with a live progress bar tracking bytes read."""
     import io
-    return pd.read_csv(io.BytesIO(file_bytes))
+
+    total_bytes = len(file_bytes)
+    progress_bar = st.progress(0.0, text="📂 Reading file…  0%")
+
+    class TrackedBytesIO(io.BytesIO):
+        def read(self, size=-1):
+            data = super().read(size)
+            pct  = min(self.tell() / total_bytes, 1.0)
+            mb   = self.tell() / 1_048_576
+            progress_bar.progress(pct, text=f"📂 Reading file…  {pct*100:.0f}%  ({mb:.1f} / {total_bytes/1_048_576:.1f} MB)")
+            return data
+
+    df = pd.read_csv(TrackedBytesIO(file_bytes))
+    progress_bar.progress(1.0, text=f"✅ Loaded {len(df):,} rows — ready for analysis")
+    return df
+
+def run_preprocess_with_progress(df, text_col):
+    """Preprocessing with live progress bar (not cached — UI calls inside)."""
+    bar = st.progress(0.0, text="🧹 Starting preprocessing…")
+
+    def on_progress(pct, msg):
+        bar.progress(float(pct), text=msg)
+
+    result = preprocess_dataframe(df, text_col, progress_callback=on_progress)
+    bar.progress(1.0, text="✅ Preprocessing complete")
+    return result
 
 @st.cache_data(show_spinner=False)
 def cached_preprocess(df_json, text_col):
@@ -58,8 +85,11 @@ html, body, [class*="css"] {
     font-family: 'Inter', sans-serif;
 }
 
-/* ── Hide default Streamlit chrome ── */
-#MainMenu, footer, header { visibility: hidden; }
+/* ── Hide specific Streamlit chrome (keep header so sidebar toggle works) ── */
+#MainMenu { visibility: hidden; }
+footer { visibility: hidden; }
+[data-testid="stDeployButton"] { display: none; }
+[data-testid="stDecoration"]   { display: none; }
 
 /* ── Background ── */
 .stApp {
@@ -258,6 +288,22 @@ html, body, [class*="css"] {
     margin-bottom: 8px;
 }
 
+/* ── Run Analysis button ── */
+.stButton > button {
+    background: linear-gradient(135deg, #276749, #2f855a) !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 10px !important;
+    padding: 13px 32px !important;
+    font-weight: 700 !important;
+    font-size: 16px !important;
+    width: 100% !important;
+    transition: opacity 0.2s !important;
+    box-shadow: 0 4px 14px rgba(39,103,73,0.4) !important;
+    margin-top: 8px !important;
+}
+.stButton > button:hover { opacity: 0.88 !important; }
+
 /* ── Download button ── */
 .stDownloadButton > button {
     background: linear-gradient(135deg, #2b6cb0, #2c5282) !important;
@@ -368,7 +414,11 @@ if not uploaded_file:
     """, unsafe_allow_html=True)
     st.stop()
 
-df_raw = cached_read_csv(uploaded_file.read())
+# Cache in session_state so progress bar only shows on first upload
+_file_key = f"{uploaded_file.name}_{uploaded_file.size}"
+if _file_key not in st.session_state:
+    st.session_state[_file_key] = load_csv_with_progress(uploaded_file.read())
+df_raw = st.session_state[_file_key]
 
 text_cols = df_raw.select_dtypes(include='object').columns.tolist()
 if not text_cols:
@@ -417,6 +467,21 @@ st.markdown(f"""
 with st.expander("📋 Preview raw data"):
     st.dataframe(df_raw.head(10), use_container_width=True)
 
+# ── Run Analysis gate ─────────────────────────────────────────────────────────
+_run_key = f"ran_{_file_key}_{text_col}"
+if _run_key not in st.session_state:
+    st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
+    st.markdown(f"""
+    <div style="text-align:center; color:#a0aec0; font-size:14px; margin-bottom:16px;">
+        File loaded: <b style="color:#e2e8f0;">{n_rows:,} rows</b> ready.
+        Click below to start the full NLP pipeline.
+    </div>
+    """, unsafe_allow_html=True)
+    if st.button("▶  Run Analysis"):
+        st.session_state[_run_key] = True
+        st.rerun()
+    st.stop()
+
 st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -432,8 +497,12 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-with st.spinner("Cleaning and tokenising reviews…"):
-    df = cached_preprocess(df_raw.to_json(orient='split'), text_col)
+_preprocess_key = f"preprocess_{_file_key}_{text_col}"
+if _preprocess_key not in st.session_state:
+    st.session_state[_preprocess_key] = run_preprocess_with_progress(df_raw, text_col)
+else:
+    st.markdown('<div style="color:#68d391; font-size:13px;">✅ Preprocessing cached</div>', unsafe_allow_html=True)
+df = st.session_state[_preprocess_key]
 
 avg_tokens = df['tokens'].apply(len).mean()
 
