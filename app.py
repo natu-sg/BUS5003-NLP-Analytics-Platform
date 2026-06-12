@@ -563,9 +563,13 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-with st.spinner("Training classifier & computing SHAP values…"):
-    pipeline, _ = train_classifier(df)
-    sample_texts = df[df['high_risk']]['cleaned_text'].head(10).tolist()
+try:
+    with st.spinner("Training classifier & computing SHAP values…"):
+        pipeline, _ = train_classifier(df)
+        sample_texts = df[df['high_risk']]['cleaned_text'].head(10).tolist()
+except ValueError as e:
+    st.warning(f"⚠️ SHAP explainability unavailable: {e}")
+    sample_texts = []
 
 if sample_texts:
     explanations = cached_shap(pipeline, tuple(sample_texts))

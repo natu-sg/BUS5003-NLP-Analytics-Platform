@@ -13,9 +13,19 @@ def train_classifier(df: pd.DataFrame) -> tuple:
     """
     Train a TF-IDF + Logistic Regression classifier on the sentiment labels.
     Returns the fitted pipeline and the filtered DataFrame used for training.
+    Raises ValueError if fewer than 2 sentiment classes are present.
     """
     df = df[df['label'].isin(LABEL_MAP)].copy()
+    df = df.dropna(subset=['cleaned_text'])
+    df = df[df['cleaned_text'].str.strip() != '']
     df['label_num'] = df['label'].map(LABEL_MAP)
+
+    n_classes = df['label_num'].nunique()
+    if n_classes < 2:
+        raise ValueError(
+            f"Need at least 2 sentiment classes to train classifier, "
+            f"but only found: {df['label'].unique().tolist()}"
+        )
 
     pipeline = Pipeline([
         ('tfidf', TfidfVectorizer(max_features=500, ngram_range=(1, 2))),
