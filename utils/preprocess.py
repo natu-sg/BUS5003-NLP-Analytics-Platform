@@ -2,7 +2,6 @@ import re
 import nltk
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
-from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 
@@ -34,11 +33,13 @@ def clean_text(text: str) -> str:
 
 
 def tokenize_and_lemmatize(text: str) -> list:
-    tokens = word_tokenize(text)
+    # text is already lowercased + non-alpha removed, so split() is sufficient
+    # (avoids word_tokenize which is not thread-safe in ThreadPoolExecutor)
+    tokens = text.split()
     return [
         _LEMMATIZER.lemmatize(t)
         for t in tokens
-        if t.isalpha() and t not in _STOP_WORDS and len(t) > 2
+        if t not in _STOP_WORDS and len(t) > 2
     ]
 
 
