@@ -25,7 +25,8 @@ st.set_page_config(
 # ── Cached wrappers ───────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
 def cached_sentiment(df_json):
-    df = pd.read_json(df_json, orient='split')
+    import io
+    df = pd.read_json(io.StringIO(df_json), orient='split')
     return analyze_dataframe(df, text_col='cleaned_text')
 
 @st.cache_data(show_spinner=False)
