@@ -227,11 +227,7 @@ with st.sidebar:
     st.markdown("""
     <div style="padding: 8px 0 20px 0;">
         <div style="font-size:22px; font-weight:700; color:#e2e8f0; margin-bottom:4px;">🔍 NLP Analytics Platform</div>
-<<<<<<< HEAD
         <div style="font-size:12px; color:#4a5568;">BUS5003 · ANH TU NGUYEN · 22025993 · SEM A 2026</div>
-=======
-        <div style="font-size:12px; color:#4a5568;">BUS5003 · ANH TU NGUYEN · 22025993 · SEM A 2026 </div>
->>>>>>> d2e437bad1a421cbacb3ef5bd577f5c36dbcef0e
     </div>
     """, unsafe_allow_html=True)
 
